@@ -1,0 +1,13 @@
+django
+djangorestframework
+drf-yasg
+djangorestframework-simplejwt
+django-cors-headers
+django-simple-history
+Pillow
+django-filter
+pytest
+pytest-django
+django-cloudinary-storage
+django-environ
+whitenoise

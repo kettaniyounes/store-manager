@@ -1,0 +1,12 @@
+venv/
+*.pyc
+__pycache__/
+media/
+static/
+*.sqlite3
+.DS_Store # For macOS
+*.log
+.pytest_cache
+pytest.ini
+tests/
+.env
