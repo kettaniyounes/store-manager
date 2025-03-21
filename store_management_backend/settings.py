@@ -29,10 +29,10 @@ environ.Env.read_env(BASE_DIR / '.env')
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-!k$ttj+b_nunw8jz^0ktkekn3p@-&bmy@c!1bqt%$*+c)r)bm)'
+SECRET_KEY = env('DJANGO_SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env('DEBUG')
 
 ALLOWED_HOSTS = []
 
@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     'customers',
     'users',
     'settings',
+    'suppliers',
 ]
 
 MIDDLEWARE = [
@@ -196,9 +197,12 @@ CLOUDINARY_STORAGE = {
 }
 
 
+# django.core.files.storage.FileSystemStorage
+# cloudinary_storage.storage.MediaCloudinaryStorage
+
 STORAGES = {
     "default": {
-        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
     },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",

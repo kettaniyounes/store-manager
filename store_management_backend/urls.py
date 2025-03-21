@@ -75,6 +75,7 @@ urlpatterns = [
     path('api/v1/customers/', include('customers.urls')), # Include customers app URLs
     path('api/v1/users/', include('users.urls')),       # Include users app URLs
     path('api/v1/settings/', include('settings.urls')),   # Include settings app URLs
+    path('api/v1/suppliers/', include('suppliers.urls')), # Include suppliers app URLs
 
     path('swagger<format>/', schema_view.without_ui(cache_timeout=0), name='schema-json'),
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
