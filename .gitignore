@@ -10,3 +10,4 @@ static/
 pytest.ini
 tests/
 .env
+release

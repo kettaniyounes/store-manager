@@ -1,4 +1,3 @@
-
 # Django Import
 from rest_framework import viewsets, filters, status
 from rest_framework.views import APIView
@@ -8,8 +7,19 @@ from django.core.files.base import ContentFile
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Category, Brand, Product, ProductImage, ProductVariant
-from .serializers import CategorySerializer, BrandSerializer, ProductImageSerializer, ProductSerializer, BarcodeCheckSerializer, ProductVariantSerializer
+from django.db.models import Q, Sum, F, Case, When, DecimalField
+from django.utils import timezone
+from datetime import timedelta
+from .models import (
+    Category, Brand, Product, ProductImage, ProductVariant,
+    StockMovement, StockAdjustment, ProductExpiration
+)
+from .serializers import (
+    CategorySerializer, BrandSerializer, ProductImageSerializer, ProductSerializer, 
+    BarcodeCheckSerializer, ProductVariantSerializer, StockMovementSerializer,
+    StockAdjustmentSerializer, ProductExpirationSerializer, LowStockReportSerializer,
+    ReorderReportSerializer, InventoryValuationSerializer
+)
 from .permissions import IsManagerOrReadOnly, IsInventoryStaffOrReadOnly, IsOwnerOrManager
 
 # Python Import
@@ -59,12 +69,257 @@ class ProductViewSet(viewsets.ModelViewSet):
         'brand': ['exact'],
         'is_active': ['exact'],
         'stock_quantity': ['exact', 'gt', 'gte', 'lt', 'lte'],
+        'is_perishable': ['exact'],
+        'inventory_valuation_method': ['exact'],
     } # Fields available for filtering
 
     search_fields = ['name', 'sku', 'description', 'barcode'] # Fields available for searching
 
-    ordering_fields = ['name', 'selling_price', 'created_at', 'stock_quantity'] # Fields available for ordering
+    ordering_fields = ['name', 'selling_price', 'created_at', 'stock_quantity', 'reorder_point'] # Fields available for ordering
     ordering = ['name'] # Default ordering
+
+    @action(detail=False, methods=['get'])
+    def low_stock_report(self, request):
+        """Get products that are below low stock threshold"""
+        low_stock_products = self.get_queryset().filter(
+            stock_quantity__lte=F('low_stock_threshold'),
+            is_active=True
+        ).select_related('category', 'brand')
+        
+        serializer = LowStockReportSerializer(low_stock_products, many=True)
+        return Response({
+            'count': low_stock_products.count(),
+            'products': serializer.data
+        })
+
+    @action(detail=False, methods=['get'])
+    def reorder_report(self, request):
+        """Get products that need to be reordered"""
+        reorder_products = self.get_queryset().filter(
+            stock_quantity__lte=F('reorder_point'),
+            is_active=True
+        ).select_related('category', 'brand')
+        
+        serializer = ReorderReportSerializer(reorder_products, many=True)
+        total_estimated_cost = sum(
+            product.reorder_quantity * product.cost_price 
+            for product in reorder_products
+        )
+        
+        return Response({
+            'count': reorder_products.count(),
+            'total_estimated_cost': total_estimated_cost,
+            'products': serializer.data
+        })
+
+    @action(detail=False, methods=['get'])
+    def inventory_valuation(self, request):
+        """Get inventory valuation report"""
+        products = self.get_queryset().filter(
+            stock_quantity__gt=0,
+            is_active=True
+        ).select_related('category', 'brand')
+        
+        serializer = InventoryValuationSerializer(products, many=True)
+        
+        # Calculate totals
+        total_cost_value = sum(
+            product.stock_quantity * product.average_cost 
+            for product in products
+        )
+        total_selling_value = sum(
+            product.stock_quantity * product.selling_price 
+            for product in products
+        )
+        potential_profit = total_selling_value - total_cost_value
+        
+        return Response({
+            'summary': {
+                'total_products': products.count(),
+                'total_cost_value': total_cost_value,
+                'total_selling_value': total_selling_value,
+                'potential_profit': potential_profit,
+                'profit_margin_percentage': (potential_profit / total_cost_value * 100) if total_cost_value > 0 else 0
+            },
+            'products': serializer.data
+        })
+
+    @action(detail=True, methods=['post'])
+    def adjust_stock(self, request, pk=None):
+        """Manually adjust stock quantity for a product"""
+        product = self.get_object()
+        quantity_after = request.data.get('quantity_after')
+        reason = request.data.get('reason', 'system_error')
+        notes = request.data.get('notes', '')
+        
+        if quantity_after is None:
+            return Response(
+                {'error': 'quantity_after is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            quantity_after = int(quantity_after)
+            if quantity_after < 0:
+                return Response(
+                    {'error': 'quantity_after cannot be negative'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'quantity_after must be a valid integer'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create stock adjustment record
+        adjustment = StockAdjustment.objects.create(
+            product=product,
+            reason=reason,
+            quantity_before=product.stock_quantity,
+            quantity_after=quantity_after,
+            unit_cost=product.average_cost,
+            notes=notes,
+            user=request.user
+        )
+        
+        # Create stock movement record
+        adjustment_quantity = quantity_after - product.stock_quantity
+        StockMovement.objects.create(
+            product=product,
+            movement_type='adjustment',
+            quantity=adjustment_quantity,
+            unit_cost=product.average_cost,
+            reference_id=adjustment.adjustment_id,
+            notes=f"Stock adjustment: {reason}",
+            user=request.user
+        )
+        
+        # Update product stock quantity
+        product.stock_quantity = quantity_after
+        product.save(update_fields=['stock_quantity'])
+        
+        serializer = StockAdjustmentSerializer(adjustment)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class StockMovementViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing stock movements"""
+    
+    queryset = StockMovement.objects.all().order_by('-movement_date')
+    serializer_class = StockMovementSerializer
+    permission_classes = [IsInventoryStaffOrReadOnly]
+    authentication_classes = [JWTAuthentication]
+    pagination_class = ProductPagination
+    
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    
+    filterset_fields = {
+        'product': ['exact'],
+        'movement_type': ['exact'],
+        'movement_date': ['date', 'date__gte', 'date__lte'],
+        'user': ['exact'],
+    }
+    
+    search_fields = ['product__name', 'product__sku', 'reference_id', 'notes']
+    ordering_fields = ['movement_date', 'quantity', 'total_cost']
+    ordering = ['-movement_date']
+    
+    def perform_create(self, serializer):
+        """Automatically update product stock when creating stock movement"""
+        movement = serializer.save(user=self.request.user)
+        
+        # Update product stock quantity
+        product = movement.product
+        if movement.movement_type in ['purchase', 'return', 'adjustment']:
+            # Stock in movements
+            product.stock_quantity += abs(movement.quantity)
+        elif movement.movement_type in ['sale', 'damage', 'expired', 'transfer']:
+            # Stock out movements
+            product.stock_quantity -= abs(movement.quantity)
+            if product.stock_quantity < 0:
+                product.stock_quantity = 0
+        
+        product.save(update_fields=['stock_quantity'])
+
+
+class StockAdjustmentViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing stock adjustments"""
+    
+    queryset = StockAdjustment.objects.all().order_by('-adjustment_date')
+    serializer_class = StockAdjustmentSerializer
+    permission_classes = [IsInventoryStaffOrReadOnly]
+    authentication_classes = [JWTAuthentication]
+    pagination_class = ProductPagination
+    
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    
+    filterset_fields = {
+        'product': ['exact'],
+        'reason': ['exact'],
+        'adjustment_date': ['date', 'date__gte', 'date__lte'],
+        'user': ['exact'],
+    }
+    
+    search_fields = ['product__name', 'product__sku', 'notes']
+    ordering_fields = ['adjustment_date', 'adjustment_quantity', 'total_value_impact']
+    ordering = ['-adjustment_date']
+    
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
+class ProductExpirationViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing product expiration tracking"""
+    
+    queryset = ProductExpiration.objects.all().order_by('expiration_date')
+    serializer_class = ProductExpirationSerializer
+    permission_classes = [IsInventoryStaffOrReadOnly]
+    authentication_classes = [JWTAuthentication]
+    pagination_class = ProductPagination
+    
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    
+    filterset_fields = {
+        'product': ['exact'],
+        'is_expired': ['exact'],
+        'expiration_date': ['date', 'date__gte', 'date__lte'],
+    }
+    
+    search_fields = ['product__name', 'product__sku', 'batch_number']
+    ordering_fields = ['expiration_date', 'manufacture_date', 'quantity']
+    ordering = ['expiration_date']
+    
+    @action(detail=False, methods=['get'])
+    def expiring_soon(self, request):
+        """Get products expiring within specified days (default 7)"""
+        days = int(request.query_params.get('days', 7))
+        cutoff_date = timezone.now().date() + timedelta(days=days)
+        
+        expiring_products = self.get_queryset().filter(
+            expiration_date__lte=cutoff_date,
+            expiration_date__gte=timezone.now().date(),
+            is_expired=False
+        ).select_related('product')
+        
+        serializer = self.get_serializer(expiring_products, many=True)
+        return Response({
+            'days_threshold': days,
+            'count': expiring_products.count(),
+            'products': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def expired_products(self, request):
+        """Get all expired products"""
+        expired_products = self.get_queryset().filter(
+            Q(expiration_date__lt=timezone.now().date()) | Q(is_expired=True)
+        ).select_related('product')
+        
+        serializer = self.get_serializer(expired_products, many=True)
+        return Response({
+            'count': expired_products.count(),
+            'products': serializer.data
+        })
 
 
 class BarcodeCheckView(APIView):
@@ -76,7 +331,7 @@ class BarcodeCheckView(APIView):
         return Response({"is_unique": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
     
 
-class ProductImageViewSet(viewsets.ModelViewSet): # <---- Create ProductImageViewSet
+class ProductImageViewSet(viewsets.ModelViewSet): # Create ProductImageViewSet
 
     serializer_class = ProductImageSerializer
     permission_classes = [IsInventoryStaffOrReadOnly] # Adjust permission as needed
@@ -163,7 +418,7 @@ class ProductImageViewSet(viewsets.ModelViewSet): # <---- Create ProductImageVie
 
 
 
-class ProductVariantViewSet(viewsets.ModelViewSet): # <---- Create ProductVariantViewSet
+class ProductVariantViewSet(viewsets.ModelViewSet): # Create ProductVariantViewSet
 
     serializer_class = ProductVariantSerializer
     permission_classes = [IsInventoryStaffOrReadOnly] # Adjust permission as needed

@@ -212,11 +212,19 @@ class PurchaseOrder(models.Model):
         verbose_name='Currency',
         help_text='Currency for this purchase order (may override supplier default).'
     )
-    total_value = models.DecimalField(
+    total_value = models.DecimalField( # this is the total price of the PO
         max_digits=10, 
         decimal_places=2, 
         verbose_name='Total Amount', 
         help_text='Total amount of the purchase Order (calculated)'
+    )
+    total_paid_amount = models.DecimalField( # this is the total price of what we paid for the PO
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        verbose_name='Total Paid Amount',
+        help_text='Total amount paid to the supplier for this Purchase Order (calculated automatically).',
+        editable=False # Make it non-editable in admin form
     )
     status = models.CharField(
         max_length=50,
@@ -344,3 +352,57 @@ class PurchaseOrderItem(models.Model):
         # Calculate line total before saving
         self.line_total = (self.unit_price * self.quantity_ordered) - self.discount_amount + self.tax_amount
         super().save(*args, **kwargs)
+
+
+
+class SupplierPayment(models.Model):
+    """Represents a payment made to a supplier for a Purchase Order."""
+
+    purchase_order = models.ForeignKey(
+        'suppliers.PurchaseOrder',
+        on_delete=models.CASCADE,
+        related_name='payments',
+        verbose_name='Purchase Order',
+        help_text='The Purchase Order this payment is for.'
+    )
+    payment_date = models.DateTimeField( # edit latet to ralted with the Payment method of the sell app
+        auto_now_add=True,
+        verbose_name='Payment Date',
+        help_text='Date and time when the payment was recorded.',
+        editable=False # Non-editable in admin
+    )
+    amount_paid = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        verbose_name='Amount Paid',
+        help_text='Amount paid in this transaction.'
+    )
+    payment_method = models.CharField( # Or ForeignKey to a PaymentMethod model if you want to manage payment methods centrally
+        max_length=255,
+        blank=True,
+        verbose_name='Payment Method',
+        help_text='Method of payment (e.g., Cash, Bank Transfer, Check).'
+    )
+    transaction_reference = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name='Transaction Reference',
+        help_text='Optional transaction reference number or ID.'
+    )
+    notes = models.TextField(
+        blank=True,
+        verbose_name='Payment Notes',
+        help_text='Optional notes about this payment.'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = 'Supplier Payment'
+        verbose_name_plural = 'Supplier Payments'
+        ordering = ['-payment_date'] # Order by payment date descending
+
+    def __str__(self):
+        return f"Payment of {self.amount_paid} for PO #{self.purchase_order.po_number} on {self.payment_date.strftime('%Y-%m-%d %H:%M')}"

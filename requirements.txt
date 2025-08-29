@@ -11,3 +11,4 @@ pytest-django
 django-cloudinary-storage
 django-environ
 whitenoise
+gunicorn
