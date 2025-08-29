@@ -454,7 +454,7 @@ class StockMovement(models.Model):
     store = models.ForeignKey(
         Store,
         on_delete=models.CASCADE,
-        related_name='stock_movements',
+        related_name='product_stock_movements',
         verbose_name='Store Location',
         help_text='Store location where this movement occurred'
     )
@@ -511,8 +511,8 @@ class StockMovement(models.Model):
         ordering = ['-movement_date']
         indexes = [
             models.Index(fields=['product', 'movement_date'], name='product_movement_date_idx'),
-            models.Index(fields=['movement_type', 'movement_date'], name='movement_type_date_idx'),
-            models.Index(fields=['store', 'movement_date'], name='store_movement_date_idx'),
+            models.Index(fields=['movement_type', 'movement_date'], name='prod_movement_type_date_idx'),
+            models.Index(fields=['store', 'movement_date'], name='prod_store_movement_date_idx'),
             models.Index(fields=['store', 'product'], name='store_product_idx'),
         ]
 

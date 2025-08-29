@@ -169,7 +169,7 @@ class StoreTransfer(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
-        related_name='requested_transfers',
+        related_name='settings_requested_transfers',
         verbose_name='Requested By'
     )
     approved_by = models.ForeignKey(
@@ -177,7 +177,7 @@ class StoreTransfer(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='approved_transfers',
+        related_name='settings_approved_transfers',
         verbose_name='Approved By'
     )
     shipped_by = models.ForeignKey(

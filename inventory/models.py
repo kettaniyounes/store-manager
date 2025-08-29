@@ -135,7 +135,7 @@ class StoreStockMovement(models.Model):
     store = models.ForeignKey(
         'settings_app.Store',
         on_delete=models.CASCADE,
-        related_name='stock_movements',
+        related_name='inventory_stock_movements',
         verbose_name='Store'
     )
     product = models.ForeignKey(
@@ -208,9 +208,9 @@ class StoreStockMovement(models.Model):
         verbose_name_plural = 'Store Stock Movements'
         ordering = ['-movement_date']
         indexes = [
-            models.Index(fields=['store', 'movement_date'], name='store_movement_date_idx'),
+            models.Index(fields=['store', 'movement_date'], name='inv_store_movement_date_idx'),
             models.Index(fields=['product', 'store', 'movement_date'], name='product_store_date_idx'),
-            models.Index(fields=['movement_type', 'movement_date'], name='movement_type_date_idx'),
+            models.Index(fields=['movement_type', 'movement_date'], name='inv_movement_type_date_idx'),
         ]
 
     def save(self, *args, **kwargs):
@@ -437,7 +437,7 @@ class StoreTransfer(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='requested_transfers',
+        related_name='inventory_requested_transfers',
         verbose_name='Requested By'
     )
     approved_by = models.ForeignKey(
@@ -445,7 +445,7 @@ class StoreTransfer(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='approved_transfers',
+        related_name='inventory_approved_transfers',
         verbose_name='Approved By'
     )
     approved_at = models.DateTimeField(
