@@ -54,10 +54,6 @@ schema_view = get_schema_view(
       - Customer Management
       - User Management with Roles and Permissions
       - Store Settings Configuration
-      - Advanced Analytics & Dashboards
-      - Multi-Store Support & Inventory Management
-      - Integration & API Enhancements
-      
 
       **Authentication:** JWT (JSON Web Token) based authentication is used for secure API access.
 
@@ -82,10 +78,7 @@ urlpatterns = [
     path('api/v1/users/', include('users.urls')),       # Include users app URLs
     path('api/v1/settings/', include('settings_app.urls')),   # Include settings app URLs
     path('api/v1/suppliers/', include('suppliers.urls')), # Include suppliers app URLs
-    path('api/v1/inventory/', include('inventory.urls')), # Include inventory app URLs
-    path('api/v1/analytics/', include('analytics.urls')), # Include analytics app URLs for dashboards and KPIs
-    path('api/v1/integrations/', include('integrations.urls')), # Include integrations app URLs for webhooks and bulk operations
-    
+
     path('swagger<format>/', schema_view.without_ui(cache_timeout=0), name='schema-json'),
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
     path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),

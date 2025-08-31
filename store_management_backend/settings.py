@@ -63,9 +63,6 @@ INSTALLED_APPS = [
     'users',
     'settings_app',
     'suppliers',
-    'inventory',
-    'analytics',
-    'integrations',
 ]
 
 MIDDLEWARE = [
@@ -166,9 +163,6 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication', # For browsable API and admin
         'rest_framework_simplejwt.authentication.JWTAuthentication', # For JWT auth
     ),
-    'DEFAULT_PERMISSION_CLASSES': [  # Added default permission classes for API security
-        'rest_framework.permissions.IsAuthenticated',
-    ],
     'DEFAULT_THROTTLE_CLASSES': [  # Add default throttle classes
         'rest_framework.throttling.AnonRateThrottle', # For anonymous users
         'rest_framework.throttling.UserRateThrottle'  # For authenticated users
@@ -177,14 +171,7 @@ REST_FRAMEWORK = {
         'anon': '20/minute',      # Anonymous users: 20 requests per minute
         'user': '100/minute',     # Authenticated users: 100 requests per minute
         'login': '5/minute',       # Add rate for 'login' scope: 5 requests per minute
-        'bulk': '10/minute',      # Added rate limiting for bulk operations
-        'export': '5/minute',     # Added rate limiting for data exports
-    },
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',  # Added pagination
-    'PAGE_SIZE': 50,  # Default page size for API responses
-    'DEFAULT_VERSIONING_CLASS': 'rest_framework.versioning.URLPathVersioning',  # Added API versioning
-    'DEFAULT_VERSION': 'v1',  # Default API version
-    'ALLOWED_VERSIONS': ['v1'],  # Supported API versions
+    }
 }
 
 SWAGGER_SETTINGS = {
