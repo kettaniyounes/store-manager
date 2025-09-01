@@ -11,3 +11,8 @@ pytest.ini
 tests/
 .env
 release
+.benchmarks
+conftest.py
+delete_migrations.py
+delete_pycache.py
+note.txt

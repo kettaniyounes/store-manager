@@ -38,3 +38,4 @@ django-debug-toolbar
 sentry-sdk
 structlog
 django-extensions
+gevent
