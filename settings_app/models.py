@@ -3,9 +3,135 @@ from django.db import models
 from django.conf import settings
 from simple_history.models import HistoricalRecords
 from django.core.exceptions import ValidationError
+from django.db import connection
+from django.utils.text import slugify
+import re
 
 # Python Imports
 from decimal import Decimal
+
+
+class TenantOrganization(models.Model):
+    """Model representing tenant organizations for schema-based multi-tenancy"""
+    
+    TENANT_STATUS = [
+        ('active', 'Active'),
+        ('inactive', 'Inactive'),
+        ('suspended', 'Suspended'),
+        ('trial', 'Trial'),
+    ]
+    
+    name = models.CharField(
+        max_length=255,
+        verbose_name='Organization Name',
+        help_text='Name of the tenant organization'
+    )
+    slug = models.SlugField(
+        max_length=50,
+        unique=True,
+        verbose_name='Organization Slug',
+        help_text='Unique slug for schema naming (e.g., acme_corp, retail_plus)'
+    )
+    schema_name = models.CharField(
+        max_length=63,  # PostgreSQL schema name limit
+        unique=True,
+        verbose_name='Schema Name',
+        help_text='PostgreSQL schema name (auto-generated from slug)'
+    )
+    domain = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True,
+        verbose_name='Custom Domain',
+        help_text='Custom domain for tenant (e.g., acme.yourdomain.com)'
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=TENANT_STATUS,
+        default='trial',
+        verbose_name='Status'
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='owned_tenants',
+        verbose_name='Organization Owner'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # Tenant configuration
+    max_users = models.IntegerField(
+        default=10,
+        verbose_name='Maximum Users',
+        help_text='Maximum number of users allowed for this tenant'
+    )
+    max_stores = models.IntegerField(
+        default=5,
+        verbose_name='Maximum Stores',
+        help_text='Maximum number of stores allowed for this tenant'
+    )
+    features = models.JSONField(
+        default=dict,
+        verbose_name='Enabled Features',
+        help_text='JSON object defining enabled features for this tenant'
+    )
+    
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = 'Tenant Organization'
+        verbose_name_plural = 'Tenant Organizations'
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['slug'], name='tenant_slug_idx'),
+            models.Index(fields=['schema_name'], name='tenant_schema_idx'),
+            models.Index(fields=['status'], name='tenant_status_idx'),
+        ]
+
+    def clean(self):
+        """Validate tenant data"""
+        if self.slug:
+            # Validate slug format
+            if not re.match(r'^[a-z0-9_]+$', self.slug):
+                raise ValidationError("Slug must contain only lowercase letters, numbers, and underscores.")
+            
+            # Ensure schema name doesn't exceed PostgreSQL limit
+            schema_name = f"tenant_{self.slug}"
+            if len(schema_name) > 63:
+                raise ValidationError("Schema name would exceed PostgreSQL 63 character limit.")
+
+    def save(self, *args, **kwargs):
+        """Auto-generate schema name and create schema"""
+        if not self.slug:
+            self.slug = slugify(self.name).replace('-', '_')
+        
+        if not self.schema_name:
+            self.schema_name = f"tenant_{self.slug}"
+        
+        # Validate before saving
+        self.clean()
+        
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        
+        # Create schema if this is a new tenant
+        if is_new:
+            self.create_schema()
+
+    def create_schema(self):
+        """Create PostgreSQL schema for this tenant"""
+        with connection.cursor() as cursor:
+            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema_name}"')
+            
+    def drop_schema(self):
+        """Drop PostgreSQL schema for this tenant (use with caution)"""
+        with connection.cursor() as cursor:
+            cursor.execute(f'DROP SCHEMA IF EXISTS "{self.schema_name}" CASCADE')
+
+    def __str__(self):
+        return f"{self.name} ({self.schema_name})"
 
 
 class Store(models.Model):
@@ -18,6 +144,14 @@ class Store(models.Model):
         ('online', 'Online Store'),
         ('kiosk', 'Kiosk'),
     ]
+    
+    tenant = models.ForeignKey(
+        TenantOrganization,
+        on_delete=models.CASCADE,
+        related_name='stores',
+        verbose_name='Tenant Organization',
+        help_text='Tenant organization this store belongs to'
+    )
     
     name = models.CharField(
         max_length=255,
@@ -115,20 +249,23 @@ class Store(models.Model):
         verbose_name = 'Store'
         verbose_name_plural = 'Stores'
         ordering = ['name']
+        unique_together = ('tenant', 'code')
         indexes = [
-            models.Index(fields=['code'], name='store_code_idx'),
-            models.Index(fields=['is_active', 'store_type'], name='store_active_type_idx'),
+            models.Index(fields=['tenant', 'code'], name='store_tenant_code_idx'),
+            models.Index(fields=['tenant', 'is_active', 'store_type'], name='store_tenant_active_type_idx'),
         ]
 
     def clean(self):
-        # Ensure only one main store exists
         if self.is_main_store:
-            existing_main = Store.objects.filter(is_main_store=True).exclude(pk=self.pk)
+            existing_main = Store.objects.filter(
+                tenant=self.tenant,
+                is_main_store=True
+            ).exclude(pk=self.pk)
             if existing_main.exists():
-                raise ValidationError("Only one main store can exist.")
+                raise ValidationError("Only one main store can exist per tenant.")
 
     def __str__(self):
-        return f"{self.name} ({self.code})"
+        return f"{self.name} ({self.code}) - {self.tenant.name}"
 
 
 class StoreTransfer(models.Model):

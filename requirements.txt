@@ -39,3 +39,4 @@ sentry-sdk
 structlog
 django-extensions
 gevent
+psycopg2-binary

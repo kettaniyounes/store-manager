@@ -3,18 +3,21 @@ from django.db import models
 from simple_history.models import HistoricalRecords
 from django.conf import settings
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 from django.db.models import Sum, F, Q
-from customers.models import Customer, CustomerSegment
-from products.models import Product, ProductVariant, Category
-from settings_app.models import Store
 
 # Python Imports
 from decimal import Decimal
 import uuid
-from datetime import datetime, timedelta
+
+# Local Imports
+from settings_app.models import Store
+from settings_app.base_models import TenantAwareHistoricalModel, SharedReferenceModel, tenant_aware_unique_together
+from customers.models import Customer, CustomerSegment
+from products.models import Product, ProductVariant, Category
 
 
-class PaymentMethod(models.Model):
+class PaymentMethod(SharedReferenceModel):
     
     name = models.CharField(
         max_length=255, 
@@ -44,12 +47,14 @@ class PaymentMethod(models.Model):
         return self.name
     
 
-
+@tenant_aware_unique_together('transaction_id')
 class SaleTransaction(models.Model):
+    """Tenant-aware sale transaction model"""
+
+    _tenant_field = 'store__tenant'
     
     transaction_id = models.CharField(
         max_length=100, 
-        unique=True, 
         default=uuid.uuid4,
         verbose_name='Transaction ID', 
         help_text='Unique transaction identifier (e.g., receipt number)'
@@ -149,7 +154,6 @@ class SaleTransaction(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Sale Transaction'
@@ -161,6 +165,9 @@ class SaleTransaction(models.Model):
             models.Index(fields=['customer', 'sale_date'], name='customer_date_idx'),
             models.Index(fields=['store', 'sale_date'], name='store_sale_date_idx'),
             models.Index(fields=['store', 'status'], name='store_status_idx'),
+            models.Index(fields=['store__tenant', 'sale_date'], name='tenant_sale_date_idx'),
+            models.Index(fields=['store__tenant', 'status'], name='tenant_sale_status_idx'),
+            models.Index(fields=['store__tenant', 'transaction_id'], name='tenant_transaction_idx'),
         ]
 
     def calculate_financial_metrics(self):
@@ -179,7 +186,10 @@ class SaleTransaction(models.Model):
         return self.transaction_id
 
 
-class SaleItem(models.Model):
+class SaleItem(TenantAwareHistoricalModel):
+    """Tenant-aware sale item model"""
+    
+    _tenant_field = 'store__tenant'
     
     sale_transaction = models.ForeignKey(
         SaleTransaction, 
@@ -266,7 +276,6 @@ class SaleItem(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Sale Item'
@@ -274,6 +283,8 @@ class SaleItem(models.Model):
         indexes = [
             models.Index(fields=['store', 'product'], name='saleitem_store_product_idx'),
             models.Index(fields=['store', 'created_at'], name='saleitem_store_date_idx'),
+            models.Index(fields=['store__tenant', 'product'], name='tenant_saleitem_product_idx'),
+            models.Index(fields=['store__tenant', 'created_at'], name='tenant_saleitem_date_idx'),
         ]
 
     def save(self, *args, **kwargs):
@@ -296,8 +307,10 @@ class SaleItem(models.Model):
         return f"Item for Sale: {self.sale_transaction.transaction_id} - Product: {self.product.name}{variant_info}"
 
 
-class FinancialPeriod(models.Model):
-    """Define financial reporting periods"""
+class FinancialPeriod(TenantAwareHistoricalModel):
+    """Tenant-aware financial reporting periods"""
+    
+    _tenant_field = 'store__tenant'
     
     PERIOD_TYPES = [
         ('daily', 'Daily'),
@@ -327,8 +340,6 @@ class FinancialPeriod(models.Model):
     store = models.ForeignKey(
         Store,
         on_delete=models.CASCADE,
-        null=True,
-        blank=True,
         related_name='financial_periods',
         verbose_name='Store Location',
         help_text='Store location for this period (null for company-wide periods)'
@@ -336,17 +347,19 @@ class FinancialPeriod(models.Model):
     is_closed = models.BooleanField(
         default=False,
         verbose_name='Is Closed',
-        help_text='Indicates if this period is closed for reporting'
+        help_text='Whether this period is closed for reporting'
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Financial Period'
         verbose_name_plural = 'Financial Periods'
         ordering = ['-start_date']
-        unique_together = ('period_type', 'start_date', 'end_date', 'store')
+        indexes = [
+            models.Index(fields=['store__tenant', 'start_date'], name='tenant_period_start_idx'),
+            models.Index(fields=['store__tenant', 'period_type'], name='tenant_period_type_idx'),
+        ]
 
     def __str__(self):
         store_info = f" - {self.store.name}" if self.store else " - Company Wide"
@@ -480,8 +493,10 @@ class ProfitLossReport(models.Model):
         return f"P&L Report for {self.period.name}{store_info}"
 
 
-class SalesAnalytics(models.Model):
-    """Detailed sales analytics and KPIs"""
+class SalesAnalytics(TenantAwareHistoricalModel):
+    """Tenant-aware sales analytics and KPIs"""
+    
+    _tenant_field = 'store__tenant'
     
     period = models.ForeignKey(
         FinancialPeriod,
@@ -561,13 +576,14 @@ class SalesAnalytics(models.Model):
         auto_now_add=True,
         verbose_name='Generated At'
     )
-    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Sales Analytics'
         verbose_name_plural = 'Sales Analytics'
         ordering = ['-generated_at']
-        unique_together = ('period', 'store')
+        indexes = [
+            models.Index(fields=['store__tenant', 'generated_at'], name='tenant_analytics_date_idx'),
+        ]
 
     def __str__(self):
         store_info = f" - {self.store.name}" if self.store else " - Company Wide"
@@ -791,8 +807,11 @@ class PricingRule(models.Model):
         return f"{self.name} ({self.rule_type})"
 
 
-class SalesReturn(models.Model):
-    """Handle product returns and refunds"""
+@tenant_aware_unique_together('return_number')
+class SalesReturn(TenantAwareHistoricalModel):
+    """Tenant-aware sales return model"""
+    
+    _tenant_field = 'store__tenant'
     
     RETURN_REASONS = [
         ('defective', 'Defective Product'),
@@ -821,7 +840,6 @@ class SalesReturn(models.Model):
     
     return_number = models.CharField(
         max_length=50,
-        unique=True,
         verbose_name='Return Number'
     )
     original_sale = models.ForeignKey(
@@ -873,12 +891,6 @@ class SalesReturn(models.Model):
         default='original_payment',
         verbose_name='Refund Method'
     )
-    restocking_fee = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        verbose_name='Restocking Fee'
-    )
     
     # Processing Information
     processed_by = models.ForeignKey(
@@ -889,11 +901,6 @@ class SalesReturn(models.Model):
         related_name='processed_returns',
         verbose_name='Processed By'
     )
-    processed_date = models.DateTimeField(
-        null=True,
-        blank=True,
-        verbose_name='Processed Date'
-    )
     
     notes = models.TextField(
         blank=True,
@@ -901,36 +908,24 @@ class SalesReturn(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Sales Return'
         verbose_name_plural = 'Sales Returns'
         ordering = ['-return_date']
-
-    def save(self, *args, **kwargs):
-        if not self.return_number:
-            # Auto-generate return number
-            prefix = "RET"
-            last_return = SalesReturn.objects.order_by('-id').first()
-            
-            if last_return:
-                last_number = last_return.return_number
-                if last_number.startswith(prefix) and last_number[len(prefix):].isdigit():
-                    next_number = int(last_number[len(prefix):]) + 1
-                    self.return_number = f"{prefix}{next_number:06d}"
-                else:
-                    self.return_number = f"{prefix}000001"
-            else:
-                self.return_number = f"{prefix}000001"
-        super().save(*args, **kwargs)
+        indexes = [
+            models.Index(fields=['store__tenant', 'return_date'], name='tenant_return_date_idx'),
+            models.Index(fields=['store__tenant', 'status'], name='tenant_return_status_idx'),
+        ]
 
     def __str__(self):
         return f"Return {self.return_number} - {self.customer.name}"
 
 
-class SalesReturnItem(models.Model):
-    """Individual items in a return"""
+class SalesReturnItem(TenantAwareHistoricalModel):
+    """Tenant-aware sales return item model"""
+    
+    _tenant_field = 'sales_return__store__tenant'
     
     sales_return = models.ForeignKey(
         SalesReturn,
@@ -995,22 +990,23 @@ class SalesReturnItem(models.Model):
         verbose_name='Item Notes'
     )
     created_at = models.DateTimeField(auto_now_add=True)
-    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Sales Return Item'
         verbose_name_plural = 'Sales Return Items'
 
-    def save(self, *args, **kwargs):
-        self.line_total = self.quantity_returned * self.unit_price
-        super().save(*args, **kwargs)
+    # def save(self, *args, **kwargs):
+    #     self.line_total = self.quantity_returned * self.unit_price
+    #     super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Return Item: {self.product.name} (Qty: {self.quantity_returned})"
 
 
-class SalesForecast(models.Model):
-    """Sales forecasting and demand planning"""
+class SalesForecast(TenantAwareHistoricalModel):
+    """Tenant-aware sales forecasting model"""
+    
+    _tenant_field = 'store__tenant'
     
     FORECAST_METHODS = [
         ('moving_average', 'Moving Average'),
@@ -1103,7 +1099,11 @@ class SalesForecast(models.Model):
         default=Decimal('0.00'),
         verbose_name='Confidence Interval (Upper)'
     )
-    
+    forecast_data = models.JSONField(
+        default=dict,
+        verbose_name='Forecast Data',
+        help_text='JSON containing forecast values and confidence intervals'
+    )
     # Model Performance
     accuracy_score = models.DecimalField(
         max_digits=5,
@@ -1136,23 +1136,21 @@ class SalesForecast(models.Model):
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Sales Forecast'
         verbose_name_plural = 'Sales Forecasts'
         ordering = ['-forecast_start_date']
         indexes = [
-            models.Index(fields=['store', 'forecast_start_date'], name='forecast_store_date_idx'),
-            models.Index(fields=['product', 'forecast_start_date'], name='forecast_product_date_idx'),
+            models.Index(fields=['store__tenant', 'forecast_start_date'], name='tenant_forecast_date_idx'),
         ]
 
     def __str__(self):
         target = "Overall"
         if self.product:
-            target = self.product.name
+            scope = f"Product: {self.product.name}"
         elif self.category:
-            target = f"Category: {self.category.name}"
+            scope = f"Category: {self.category.name}"
         
-        store_info = f" - {self.store.name}" if self.store else " - All Stores"
-        return f"Sales Forecast: {target}{store_info} ({self.forecast_start_date})"
+        store_info = f" - {self.store.name}" if self.store else " - Company Wide"
+        return f"Forecast: {scope}{store_info}"
