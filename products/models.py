@@ -9,13 +9,11 @@ from django.utils import timezone
 from decimal import Decimal
 import uuid
 
-# Local Imports
 from settings_app.models import Store
-from settings_app.base_models import TenantAwareHistoricalModel, SharedReferenceModel
 
 
-class Category(SharedReferenceModel):
-    """Shared reference model - categories are global across all tenants"""
+
+class Category(models.Model):
 
     name = models.CharField(
         max_length=255,
@@ -42,8 +40,7 @@ class Category(SharedReferenceModel):
 
 
 
-class Brand(SharedReferenceModel):
-    """Shared reference model - brands are global across all tenants"""
+class Brand(models.Model):
 
     name = models.CharField(
         max_length=255,
@@ -75,8 +72,8 @@ class Brand(SharedReferenceModel):
     
 
 
-class Product(TenantAwareHistoricalModel):
-    """Tenant-aware product model - products are isolated per tenant"""
+
+class Product(models.Model):
 
     name = models.CharField(
         max_length=255,
@@ -118,10 +115,12 @@ class Product(TenantAwareHistoricalModel):
         related_name='products',
         verbose_name='Brand',
         help_text='Optional brand of the product',
-    ) 
+    ) # Allow brand to be null, SET_NULL on delete, related_name, to_field='name' example
     default_store = models.ForeignKey(
         Store,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='default_products',
         verbose_name='Default Store',
         help_text='Default store location for this product'
@@ -220,6 +219,7 @@ class Product(TenantAwareHistoricalModel):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Product'
@@ -230,17 +230,9 @@ class Product(TenantAwareHistoricalModel):
             models.Index(fields=['stock_quantity', 'reorder_point'], name='stock_reorder_idx'),
             models.Index(fields=['is_perishable', 'shelf_life_days'], name='perishable_idx'),
             models.Index(fields=['default_store', 'is_active'], name='store_active_idx'),
-            models.Index(fields=['sku'], name='product_sku_idx'),
-            models.Index(fields=['barcode'], name='product_barcode_idx'),
-            models.Index(fields=['is_active'], name='product_active_idx'),
-        ]
-        unique_together = [
-            ('sku',),
-            ('barcode',),
         ]
     
     def clean(self):
-        super().clean()
         # Validate that selling price is not less than cost price
         if self.selling_price < self.cost_price:
             raise ValidationError("Selling price cannot be less than cost price.")
@@ -342,11 +334,12 @@ class Product(TenantAwareHistoricalModel):
 
     def __str__(self):
         return self.name
-
-
-class ProductImage(TenantAwareHistoricalModel):
-    """Tenant-aware product image model"""
     
+
+
+
+class ProductImage(models.Model):
+
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
@@ -366,6 +359,7 @@ class ProductImage(TenantAwareHistoricalModel):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Product Image'
@@ -375,8 +369,9 @@ class ProductImage(TenantAwareHistoricalModel):
         return f"Image for {self.product.name} (ID: {self.id})"
     
 
-class ProductVariant(TenantAwareHistoricalModel):
-    """Tenant-aware product variant model"""
+
+
+class ProductVariant(models.Model):
     
     product = models.ForeignKey(
         Product,
@@ -409,21 +404,21 @@ class ProductVariant(TenantAwareHistoricalModel):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Product Variant'
         verbose_name_plural = 'Product Variants'
+        unique_together = ('product', 'name', 'value') # Ensure uniqueness for variant options within a product
         ordering = ['name', 'value']
-        unique_together = [
-            ('product', 'name', 'value'),
-        ]
 
     def __str__(self):
         return f"{self.product.name} - {self.name}: {self.value}" # More informative __str__
 
 
-class StockMovement(TenantAwareHistoricalModel):
-    """Tenant-aware stock movement tracking"""
+
+class StockMovement(models.Model):
+    """Track all stock movements (in/out) for inventory management"""
     
     MOVEMENT_TYPES = [
         ('purchase', 'Purchase/Stock In'),
@@ -510,6 +505,7 @@ class StockMovement(TenantAwareHistoricalModel):
         verbose_name='Movement Date'
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Stock Movement'
@@ -520,11 +516,6 @@ class StockMovement(TenantAwareHistoricalModel):
             models.Index(fields=['movement_type', 'movement_date'], name='movement_type_date_idx'),
             models.Index(fields=['store', 'movement_date'], name='store_movement_date_idx'),
             models.Index(fields=['store', 'product'], name='store_product_idx'),
-            models.Index(fields=['movement_date'], name='movement_date_idx'),
-            models.Index(fields=['product'], name='product_movement_idx'),
-        ]
-        unique_together = [
-            ('movement_id',),
         ]
 
     def save(self, *args, **kwargs):
@@ -536,8 +527,9 @@ class StockMovement(TenantAwareHistoricalModel):
         return f"{self.movement_type.title()} - {self.product.name} ({self.quantity} units)"
 
 
-class StockAdjustment(TenantAwareHistoricalModel):
-    """Tenant-aware stock adjustment tracking"""
+
+class StockAdjustment(models.Model):
+    """Handle stock adjustments and corrections"""
     
     ADJUSTMENT_REASONS = [
         ('count_discrepancy', 'Physical Count Discrepancy'),
@@ -620,6 +612,7 @@ class StockAdjustment(TenantAwareHistoricalModel):
         verbose_name='Adjustment Date'
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Stock Adjustment'
@@ -628,10 +621,6 @@ class StockAdjustment(TenantAwareHistoricalModel):
         indexes = [
             models.Index(fields=['store', 'adjustment_date'], name='store_adjustment_date_idx'),
             models.Index(fields=['store', 'product'], name='store_product_adj_idx'),
-            models.Index(fields=['adjustment_date'], name='adjustment_date_idx'),
-        ]
-        unique_together = [
-            ('adjustment_id',),
         ]
 
     def save(self, *args, **kwargs):
@@ -645,8 +634,8 @@ class StockAdjustment(TenantAwareHistoricalModel):
 
 
 
-class ProductExpiration(TenantAwareHistoricalModel):
-    """Tenant-aware product expiration tracking"""
+class ProductExpiration(models.Model):
+    """Track expiration dates for perishable products"""
     
     product = models.ForeignKey(
         Product,
@@ -697,6 +686,7 @@ class ProductExpiration(TenantAwareHistoricalModel):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Product Expiration'
@@ -707,7 +697,6 @@ class ProductExpiration(TenantAwareHistoricalModel):
             models.Index(fields=['product', 'expiration_date'], name='product_expiration_idx'),
             models.Index(fields=['store', 'expiration_date'], name='store_expiration_idx'),
             models.Index(fields=['store', 'is_expired'], name='store_expired_idx'),
-            models.Index(fields=['expiration_date'], name='expiration_date_idx'),
         ]
 
     def days_until_expiration(self):

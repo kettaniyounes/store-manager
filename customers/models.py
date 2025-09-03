@@ -5,12 +5,10 @@ from django.utils import timezone
 from django.db.models import Sum, Count, Avg, F
 from decimal import Decimal
 
-from settings_app.base_models import TenantAwareHistoricalModel, SharedReferenceModel
-
 # Python Imports
 
 
-class Customer(TenantAwareHistoricalModel):
+class Customer(models.Model):
     
     name = models.CharField(
         max_length=255,
@@ -40,22 +38,24 @@ class Customer(TenantAwareHistoricalModel):
         verbose_name='Notes',
         help_text="Any additional notes about the customer (optional)"
     )
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True
+    )
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Customer'
         verbose_name_plural = 'Customers'
         ordering = ['name']  # Default ordering by customer name
-        indexes = [
-            models.Index(fields=['name'], name='customer_name_idx'),
-            models.Index(fields=['phone_number'], name='customer_phone_idx'),
-            models.Index(fields=['email'], name='customer_email_idx'),
-        ]
 
     def __str__(self):
         return self.name
 
 
-class CustomerSegment(SharedReferenceModel):
+class CustomerSegment(models.Model):
     """Customer segmentation for targeted marketing and pricing"""
     
     SEGMENT_TYPES = [
@@ -134,6 +134,9 @@ class CustomerSegment(SharedReferenceModel):
         default=True,
         verbose_name='Is Active'
     )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Customer Segment'
@@ -144,7 +147,7 @@ class CustomerSegment(SharedReferenceModel):
         return self.name
 
 
-class CustomerProfile(TenantAwareHistoricalModel):
+class CustomerProfile(models.Model):
     """Extended customer profile with analytics and segmentation"""
     
     CUSTOMER_TIERS = [
@@ -246,16 +249,14 @@ class CustomerProfile(TenantAwareHistoricalModel):
         verbose_name='Days Since Last Purchase'
     )
     
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Customer Profile'
         verbose_name_plural = 'Customer Profiles'
         ordering = ['-total_spent']
-        indexes = [
-            models.Index(fields=['tier'], name='customer_profile_tier_idx'),
-            models.Index(fields=['total_spent'], name='customer_profile_spent_idx'),
-            models.Index(fields=['last_purchase_date'], name='customer_profile_last_pur_idx'),
-        ]
 
     def update_analytics(self):
         """Update customer analytics based on transaction history"""
@@ -312,7 +313,7 @@ class CustomerProfile(TenantAwareHistoricalModel):
         return f"{self.customer.name} Profile ({self.tier.title()})"
 
 
-class LoyaltyProgram(SharedReferenceModel):
+class LoyaltyProgram(models.Model):
     """Loyalty program configuration"""
     
     name = models.CharField(
@@ -375,6 +376,9 @@ class LoyaltyProgram(SharedReferenceModel):
         verbose_name='Referral Bonus Points'
     )
     
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Loyalty Program'
@@ -385,7 +389,7 @@ class LoyaltyProgram(SharedReferenceModel):
         return self.name
 
 
-class CustomerLoyaltyAccount(TenantAwareHistoricalModel):
+class CustomerLoyaltyAccount(models.Model):
     """Individual customer loyalty account"""
     
     customer = models.OneToOneField(
@@ -442,21 +446,15 @@ class CustomerLoyaltyAccount(TenantAwareHistoricalModel):
         verbose_name='Anniversary Date'
     )
     
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Customer Loyalty Account'
         verbose_name_plural = 'Customer Loyalty Accounts'
-        constraints = [
-            models.UniqueConstraint(
-                fields=['customer', 'program'],
-                name='unique_customer_loyalty_program'
-            )
-        ]
+        unique_together = ('customer', 'program')
         ordering = ['-current_points']
-        indexes = [
-            models.Index(fields=['current_points'], name='loyalty_account_points_idx'),
-            models.Index(fields=['last_activity_date'], name='loyalty_account_activity_idx'),
-        ]
 
     def add_points(self, points, transaction_type='purchase', reference_id=None, description=None):
         """Add points to customer account"""
@@ -499,7 +497,7 @@ class CustomerLoyaltyAccount(TenantAwareHistoricalModel):
         return f"{self.customer.name} - {self.current_points} points"
 
 
-class LoyaltyTransaction(TenantAwareHistoricalModel):
+class LoyaltyTransaction(models.Model):
     """Track all loyalty point transactions"""
     
     TRANSACTION_TYPES = [
@@ -550,6 +548,7 @@ class LoyaltyTransaction(TenantAwareHistoricalModel):
         blank=True,
         verbose_name='Points Expiry Date'
     )
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Loyalty Transaction'
@@ -564,7 +563,7 @@ class LoyaltyTransaction(TenantAwareHistoricalModel):
         return f"{self.loyalty_account.customer.name} - {self.points_change} points ({self.transaction_type})"
 
 
-class PromotionalCampaign(TenantAwareHistoricalModel):
+class PromotionalCampaign(models.Model):
     """Marketing campaigns and promotions"""
     
     CAMPAIGN_TYPES = [
@@ -670,15 +669,14 @@ class PromotionalCampaign(TenantAwareHistoricalModel):
         verbose_name='Minimum Purchase Amount'
     )
     
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    history = HistoricalRecords()
 
     class Meta:
         verbose_name = 'Promotional Campaign'
         verbose_name_plural = 'Promotional Campaigns'
         ordering = ['-start_date']
-        indexes = [
-            models.Index(fields=['status', 'start_date'], name='campaign_status_start_idx'),
-            models.Index(fields=['campaign_type'], name='campaign_type_idx'),
-        ]
 
     def is_active(self):
         """Check if campaign is currently active"""

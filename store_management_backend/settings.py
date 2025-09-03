@@ -80,7 +80,6 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    'store_management_backend.middleware.TenantResolutionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'simple_history.middleware.HistoryRequestMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
@@ -130,11 +129,6 @@ DATABASES = {
         'PASSWORD': env('DATABASE_PASSWORD'), # The password you set
         'HOST': 'localhost',          # Or '127.0.0.1'
         'PORT': '5432',               # Default PostgreSQL port
-        # 'OPTIONS': {
-        #     'sslmode': 'require',
-        # },
-        'CONN_MAX_AGE': 600,  # Connection pooling
-        'CONN_HEALTH_CHECKS': True,
     }
 }
 
@@ -258,49 +252,21 @@ CACHES = {
         'LOCATION': env('REDIS_URL', default='redis://127.0.0.1:6379/1'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'CONNECTION_POOL_KWARGS': {
-                'max_connections': 50,
-                'retry_on_timeout': True,
-            },
-        },
-        'KEY_PREFIX': 'store_mgmt',
-        'TIMEOUT': 300,
-    },
-    'tenant_cache': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://127.0.0.1:6379/2',
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-        },
-        'KEY_PREFIX': 'tenant',
-        'TIMEOUT': 3600,  # Longer timeout for tenant data
+        }
     }
 }
 
-# Session Configuration
 SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 SESSION_CACHE_ALIAS = 'default'
-SESSION_COOKIE_SECURE = True
-SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = 'Lax'
 
-
-# CORS Settings for Multi-Tenant
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOW_CREDENTIALS = True
-CORS_PREFLIGHT_MAX_AGE = 86400
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:8080",
     "http://127.0.0.1:8080",
-    "http://app.localhost:8080",
-    "http://app.127.0.0.1:8080",
-    "http://app.localhost:3000",
-    "http://app.127.0.0.1:3000",
-
 ]
 
+CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOWED_HEADERS = [
     'accept',
@@ -312,8 +278,6 @@ CORS_ALLOWED_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
-    'x-tenant-id',  # Added for tenant resolution
-    'x-api-key',    # Added for API key-based tenant resolution
 ]
 
 SECURE_BROWSER_XSS_FILTER = True
@@ -322,10 +286,8 @@ X_FRAME_OPTIONS = 'DENY'
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 LOGGING_CONFIG = None
-
 
 structlog.configure(
     processors=[
@@ -353,76 +315,41 @@ LOGGING = {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
             'style': '{',
         },
-        'tenant_formatter': {
-            'format': '[TENANT:{tenant_id}] {levelname} {asctime} {module} {message}',
-            'style': '{',
-        },
-    },
-    'filters': {
-        'tenant_filter': {
-            '()': 'settings_app.logging.TenantLogFilter',
+        'json': {
+            '()': structlog.stdlib.ProcessorFormatter,
+            'processor': structlog.processors.JSONRenderer(),
         },
     },
     'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'json',
+        },
         'file': {
-            'level': 'INFO',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': '/var/log/django/store_management.log',
+            'filename': BASE_DIR / 'logs' / 'django.log',
             'maxBytes': 1024*1024*15,  # 15MB
             'backupCount': 10,
-            'formatter': 'verbose',
+            'formatter': 'json',
         },
-        'tenant_file': {
-            'level': 'INFO',
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': '/var/log/django/tenant_operations.log',
-            'maxBytes': 1024*1024*10,  # 10MB
-            'backupCount': 5,
-            'formatter': 'tenant_formatter',
-            'filters': ['tenant_filter'],
-        },
-        'console': {
-            'level': 'ERROR',
-            'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
-        },
+    },
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': 'INFO',
     },
     'loggers': {
         'django': {
-            'handlers': ['file', 'console'],
-            'level': 'INFO',
-            'propagate': True,
-        },
-        'settings_app': {
-            'handlers': ['tenant_file', 'console'],
+            'handlers': ['console', 'file'],
             'level': 'INFO',
             'propagate': False,
         },
-        'tenant_operations': {
-            'handlers': ['tenant_file'],
-            'level': 'INFO',
+        'store_management': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG' if DEBUG else 'INFO',
             'propagate': False,
         },
     },
 }
-
-# Multi-Tenant Specific Settings
-TENANT_CACHE_TIMEOUT = 3600  # 1 hour
-TENANT_SCHEMA_CACHE_TIMEOUT = 7200  # 2 hours
-MAX_TENANT_SCHEMAS = 1000  # Limit for safety
-TENANT_CREATION_RATE_LIMIT = '10/hour'  # Rate limit tenant creation
-
-# Performance Settings
-DATABASE_CONNECTION_POOL_SIZE = 20
-DATABASE_CONNECTION_MAX_OVERFLOW = 30
-TENANT_SCHEMA_CACHE_SIZE = 100
-
-# Monitoring and Health Checks
-HEALTH_CHECK_ENDPOINTS = [
-    'health/',
-    'tenant-health/',
-    'db-health/',
-]
 
 CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://127.0.0.1:6379/0')
 CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://127.0.0.1:6379/0')
