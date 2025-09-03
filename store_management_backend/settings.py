@@ -130,9 +130,9 @@ DATABASES = {
         'PASSWORD': env('DATABASE_PASSWORD'), # The password you set
         'HOST': 'localhost',          # Or '127.0.0.1'
         'PORT': '5432',               # Default PostgreSQL port
-        'OPTIONS': {
-            'sslmode': 'require',
-        },
+        # 'OPTIONS': {
+        #     'sslmode': 'require',
+        # },
         'CONN_MAX_AGE': 600,  # Connection pooling
         'CONN_HEALTH_CHECKS': True,
     }

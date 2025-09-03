@@ -11,7 +11,7 @@ import uuid
 
 # Local Imports
 from settings_app.models import Store
-from settings_app.base_models import TenantAwareHistoricalModel, SharedReferenceModel, tenant_aware_unique_together
+from settings_app.base_models import TenantAwareHistoricalModel, SharedReferenceModel
 
 
 class Category(SharedReferenceModel):
@@ -75,13 +75,8 @@ class Brand(SharedReferenceModel):
     
 
 
-
-@tenant_aware_unique_together('sku')
-@tenant_aware_unique_together('barcode')
 class Product(TenantAwareHistoricalModel):
     """Tenant-aware product model - products are isolated per tenant"""
-
-    _tenant_field = 'default_store__tenant'
 
     name = models.CharField(
         max_length=255,
@@ -94,12 +89,14 @@ class Product(TenantAwareHistoricalModel):
     )
     sku = models.CharField(
         max_length=50,
+        unique=True,
         db_index=True,
         verbose_name='SKU',
         help_text='Stock Keeping Unit - unique product identifier'
     )
     barcode = models.CharField(
         max_length=100,
+        unique=True,
         blank=True,
         null=True,
         db_index=True,
@@ -233,9 +230,13 @@ class Product(TenantAwareHistoricalModel):
             models.Index(fields=['stock_quantity', 'reorder_point'], name='stock_reorder_idx'),
             models.Index(fields=['is_perishable', 'shelf_life_days'], name='perishable_idx'),
             models.Index(fields=['default_store', 'is_active'], name='store_active_idx'),
-            models.Index(fields=['default_store__tenant', 'sku'], name='tenant_sku_idx'),
-            models.Index(fields=['default_store__tenant', 'barcode'], name='tenant_barcode_idx'),
-            models.Index(fields=['default_store__tenant', 'is_active'], name='tenant_active_idx'),
+            models.Index(fields=['sku'], name='product_sku_idx'),
+            models.Index(fields=['barcode'], name='product_barcode_idx'),
+            models.Index(fields=['is_active'], name='product_active_idx'),
+        ]
+        unique_together = [
+            ('sku',),
+            ('barcode',),
         ]
     
     def clean(self):
@@ -346,8 +347,6 @@ class Product(TenantAwareHistoricalModel):
 class ProductImage(TenantAwareHistoricalModel):
     """Tenant-aware product image model"""
     
-    _tenant_field = 'product__default_store__tenant'
-
     product = models.ForeignKey(
         Product,
         on_delete=models.CASCADE,
@@ -376,13 +375,8 @@ class ProductImage(TenantAwareHistoricalModel):
         return f"Image for {self.product.name} (ID: {self.id})"
     
 
-
-
-@tenant_aware_unique_together('product', 'name', 'value')
 class ProductVariant(TenantAwareHistoricalModel):
     """Tenant-aware product variant model"""
-    
-    _tenant_field = 'product__default_store__tenant'
     
     product = models.ForeignKey(
         Product,
@@ -420,16 +414,16 @@ class ProductVariant(TenantAwareHistoricalModel):
         verbose_name = 'Product Variant'
         verbose_name_plural = 'Product Variants'
         ordering = ['name', 'value']
+        unique_together = [
+            ('product', 'name', 'value'),
+        ]
 
     def __str__(self):
         return f"{self.product.name} - {self.name}: {self.value}" # More informative __str__
 
 
-@tenant_aware_unique_together('movement_id')
 class StockMovement(TenantAwareHistoricalModel):
     """Tenant-aware stock movement tracking"""
-    
-    _tenant_field = 'store__tenant'
     
     MOVEMENT_TYPES = [
         ('purchase', 'Purchase/Stock In'),
@@ -445,6 +439,7 @@ class StockMovement(TenantAwareHistoricalModel):
     
     movement_id = models.CharField(
         max_length=50,
+        unique=True,
         default=uuid.uuid4,
         verbose_name='Movement ID',
         help_text='Unique identifier for this stock movement'
@@ -525,8 +520,11 @@ class StockMovement(TenantAwareHistoricalModel):
             models.Index(fields=['movement_type', 'movement_date'], name='movement_type_date_idx'),
             models.Index(fields=['store', 'movement_date'], name='store_movement_date_idx'),
             models.Index(fields=['store', 'product'], name='store_product_idx'),
-            models.Index(fields=['store__tenant', 'movement_date'], name='tenant_movement_date_idx'),
-            models.Index(fields=['store__tenant', 'product'], name='tenant_product_movement_idx'),
+            models.Index(fields=['movement_date'], name='movement_date_idx'),
+            models.Index(fields=['product'], name='product_movement_idx'),
+        ]
+        unique_together = [
+            ('movement_id',),
         ]
 
     def save(self, *args, **kwargs):
@@ -538,11 +536,8 @@ class StockMovement(TenantAwareHistoricalModel):
         return f"{self.movement_type.title()} - {self.product.name} ({self.quantity} units)"
 
 
-@tenant_aware_unique_together('adjustment_id')
 class StockAdjustment(TenantAwareHistoricalModel):
     """Tenant-aware stock adjustment tracking"""
-    
-    _tenant_field = 'store__tenant'
     
     ADJUSTMENT_REASONS = [
         ('count_discrepancy', 'Physical Count Discrepancy'),
@@ -555,6 +550,7 @@ class StockAdjustment(TenantAwareHistoricalModel):
     
     adjustment_id = models.CharField(
         max_length=50,
+        unique=True,
         default=uuid.uuid4,
         verbose_name='Adjustment ID'
     )
@@ -632,7 +628,10 @@ class StockAdjustment(TenantAwareHistoricalModel):
         indexes = [
             models.Index(fields=['store', 'adjustment_date'], name='store_adjustment_date_idx'),
             models.Index(fields=['store', 'product'], name='store_product_adj_idx'),
-            models.Index(fields=['store__tenant', 'adjustment_date'], name='tenant_adjustment_date_idx'),
+            models.Index(fields=['adjustment_date'], name='adjustment_date_idx'),
+        ]
+        unique_together = [
+            ('adjustment_id',),
         ]
 
     def save(self, *args, **kwargs):
@@ -648,8 +647,6 @@ class StockAdjustment(TenantAwareHistoricalModel):
 
 class ProductExpiration(TenantAwareHistoricalModel):
     """Tenant-aware product expiration tracking"""
-    
-    _tenant_field = 'store__tenant'
     
     product = models.ForeignKey(
         Product,
@@ -710,7 +707,7 @@ class ProductExpiration(TenantAwareHistoricalModel):
             models.Index(fields=['product', 'expiration_date'], name='product_expiration_idx'),
             models.Index(fields=['store', 'expiration_date'], name='store_expiration_idx'),
             models.Index(fields=['store', 'is_expired'], name='store_expired_idx'),
-            models.Index(fields=['store__tenant', 'expiration_date'], name='tenant_expiration_idx'),
+            models.Index(fields=['expiration_date'], name='expiration_date_idx'),
         ]
 
     def days_until_expiration(self):

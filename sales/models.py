@@ -12,7 +12,7 @@ import uuid
 
 # Local Imports
 from settings_app.models import Store
-from settings_app.base_models import TenantAwareHistoricalModel, SharedReferenceModel, tenant_aware_unique_together
+from settings_app.base_models import TenantAwareHistoricalModel, SharedReferenceModel
 from customers.models import Customer, CustomerSegment
 from products.models import Product, ProductVariant, Category
 
@@ -47,14 +47,12 @@ class PaymentMethod(SharedReferenceModel):
         return self.name
     
 
-@tenant_aware_unique_together('transaction_id')
-class SaleTransaction(models.Model):
+class SaleTransaction(TenantAwareHistoricalModel):
     """Tenant-aware sale transaction model"""
-
-    _tenant_field = 'store__tenant'
     
     transaction_id = models.CharField(
-        max_length=100, 
+        max_length=100,
+        unique=True,
         default=uuid.uuid4,
         verbose_name='Transaction ID', 
         help_text='Unique transaction identifier (e.g., receipt number)'
@@ -165,9 +163,12 @@ class SaleTransaction(models.Model):
             models.Index(fields=['customer', 'sale_date'], name='customer_date_idx'),
             models.Index(fields=['store', 'sale_date'], name='store_sale_date_idx'),
             models.Index(fields=['store', 'status'], name='store_status_idx'),
-            models.Index(fields=['store__tenant', 'sale_date'], name='tenant_sale_date_idx'),
-            models.Index(fields=['store__tenant', 'status'], name='tenant_sale_status_idx'),
-            models.Index(fields=['store__tenant', 'transaction_id'], name='tenant_transaction_idx'),
+            models.Index(fields=['sale_date'], name='sale_date_idx'),
+            models.Index(fields=['status'], name='sale_status_idx'),
+            models.Index(fields=['transaction_id'], name='transaction_idx'),
+        ]
+        unique_together = [
+            ('transaction_id',),
         ]
 
     def calculate_financial_metrics(self):
@@ -188,9 +189,7 @@ class SaleTransaction(models.Model):
 
 class SaleItem(TenantAwareHistoricalModel):
     """Tenant-aware sale item model"""
-    
-    _tenant_field = 'store__tenant'
-    
+        
     sale_transaction = models.ForeignKey(
         SaleTransaction, 
         on_delete=models.CASCADE,
@@ -283,8 +282,8 @@ class SaleItem(TenantAwareHistoricalModel):
         indexes = [
             models.Index(fields=['store', 'product'], name='saleitem_store_product_idx'),
             models.Index(fields=['store', 'created_at'], name='saleitem_store_date_idx'),
-            models.Index(fields=['store__tenant', 'product'], name='tenant_saleitem_product_idx'),
-            models.Index(fields=['store__tenant', 'created_at'], name='tenant_saleitem_date_idx'),
+            models.Index(fields=['product'], name='saleitem_product_idx'),
+            models.Index(fields=['created_at'], name='saleitem_date_idx'),
         ]
 
     def save(self, *args, **kwargs):
@@ -309,9 +308,7 @@ class SaleItem(TenantAwareHistoricalModel):
 
 class FinancialPeriod(TenantAwareHistoricalModel):
     """Tenant-aware financial reporting periods"""
-    
-    _tenant_field = 'store__tenant'
-    
+        
     PERIOD_TYPES = [
         ('daily', 'Daily'),
         ('weekly', 'Weekly'),
@@ -357,8 +354,8 @@ class FinancialPeriod(TenantAwareHistoricalModel):
         verbose_name_plural = 'Financial Periods'
         ordering = ['-start_date']
         indexes = [
-            models.Index(fields=['store__tenant', 'start_date'], name='tenant_period_start_idx'),
-            models.Index(fields=['store__tenant', 'period_type'], name='tenant_period_type_idx'),
+            models.Index(fields=['start_date'], name='period_start_idx'),
+            models.Index(fields=['period_type'], name='period_type_idx'),
         ]
 
     def __str__(self):
@@ -495,9 +492,7 @@ class ProfitLossReport(models.Model):
 
 class SalesAnalytics(TenantAwareHistoricalModel):
     """Tenant-aware sales analytics and KPIs"""
-    
-    _tenant_field = 'store__tenant'
-    
+        
     period = models.ForeignKey(
         FinancialPeriod,
         on_delete=models.CASCADE,
@@ -582,7 +577,7 @@ class SalesAnalytics(TenantAwareHistoricalModel):
         verbose_name_plural = 'Sales Analytics'
         ordering = ['-generated_at']
         indexes = [
-            models.Index(fields=['store__tenant', 'generated_at'], name='tenant_analytics_date_idx'),
+            models.Index(fields=['generated_at'], name='analytics_date_idx'),
         ]
 
     def __str__(self):
@@ -807,12 +802,9 @@ class PricingRule(models.Model):
         return f"{self.name} ({self.rule_type})"
 
 
-@tenant_aware_unique_together('return_number')
 class SalesReturn(TenantAwareHistoricalModel):
     """Tenant-aware sales return model"""
-    
-    _tenant_field = 'store__tenant'
-    
+        
     RETURN_REASONS = [
         ('defective', 'Defective Product'),
         ('wrong_item', 'Wrong Item Received'),
@@ -840,6 +832,7 @@ class SalesReturn(TenantAwareHistoricalModel):
     
     return_number = models.CharField(
         max_length=50,
+        unique=True,
         verbose_name='Return Number'
     )
     original_sale = models.ForeignKey(
@@ -914,8 +907,11 @@ class SalesReturn(TenantAwareHistoricalModel):
         verbose_name_plural = 'Sales Returns'
         ordering = ['-return_date']
         indexes = [
-            models.Index(fields=['store__tenant', 'return_date'], name='tenant_return_date_idx'),
-            models.Index(fields=['store__tenant', 'status'], name='tenant_return_status_idx'),
+            models.Index(fields=['return_date'], name='return_date_idx'),
+            models.Index(fields=['status'], name='return_status_idx'),
+        ]
+        unique_together = [
+            ('return_number',),
         ]
 
     def __str__(self):
@@ -924,9 +920,7 @@ class SalesReturn(TenantAwareHistoricalModel):
 
 class SalesReturnItem(TenantAwareHistoricalModel):
     """Tenant-aware sales return item model"""
-    
-    _tenant_field = 'sales_return__store__tenant'
-    
+        
     sales_return = models.ForeignKey(
         SalesReturn,
         on_delete=models.CASCADE,
@@ -995,9 +989,9 @@ class SalesReturnItem(TenantAwareHistoricalModel):
         verbose_name = 'Sales Return Item'
         verbose_name_plural = 'Sales Return Items'
 
-    # def save(self, *args, **kwargs):
-    #     self.line_total = self.quantity_returned * self.unit_price
-    #     super().save(*args, **kwargs)
+    def save(self, *args, **kwargs):
+        self.line_total = self.quantity_returned * self.unit_price
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Return Item: {self.product.name} (Qty: {self.quantity_returned})"
@@ -1005,9 +999,7 @@ class SalesReturnItem(TenantAwareHistoricalModel):
 
 class SalesForecast(TenantAwareHistoricalModel):
     """Tenant-aware sales forecasting model"""
-    
-    _tenant_field = 'store__tenant'
-    
+        
     FORECAST_METHODS = [
         ('moving_average', 'Moving Average'),
         ('exponential_smoothing', 'Exponential Smoothing'),
@@ -1142,7 +1134,7 @@ class SalesForecast(TenantAwareHistoricalModel):
         verbose_name_plural = 'Sales Forecasts'
         ordering = ['-forecast_start_date']
         indexes = [
-            models.Index(fields=['store__tenant', 'forecast_start_date'], name='tenant_forecast_date_idx'),
+            models.Index(fields=['forecast_start_date'], name='forecast_date_idx'),
         ]
 
     def __str__(self):
