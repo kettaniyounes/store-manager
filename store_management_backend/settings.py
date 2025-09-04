@@ -44,7 +44,8 @@ ALLOWED_HOSTS = []
 
 # Application definition
 
-INSTALLED_APPS = [
+SHARED_APPS = [
+    'django_tenants',  # Must be first
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -62,6 +63,23 @@ INSTALLED_APPS = [
     'django_redis',
     'django_extensions',
 
+    # Tenant management app (shared)
+    'tenants',
+]
+
+TENANT_APPS = [
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+
+    'rest_framework',
+    'simple_history',
+    'django_filters',
+
+    # Store management apps (tenant-specific)
     'products',
     'sales',
     'customers',
@@ -73,7 +91,13 @@ INSTALLED_APPS = [
     'integrations',
 ]
 
+INSTALLED_APPS = list(SHARED_APPS) + [app for app in TENANT_APPS if app not in SHARED_APPS]
+
+TENANT_MODEL = "tenants.Tenant"
+TENANT_DOMAIN_MODEL = "tenants.Domain"
+
 MIDDLEWARE = [
+    'django_tenants.middleware.main.TenantMainMiddleware',  # Must be first
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
@@ -123,7 +147,7 @@ DATABASES = {
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
+        'ENGINE': 'django_tenants.postgresql_backend',  # Use tenant-aware backend
         'NAME': env('DATABASE_NAME'),        # The name of your database
         'USER': env('DATABASE_USER'),     # The user you created
         'PASSWORD': env('DATABASE_PASSWORD'), # The password you set
@@ -131,6 +155,10 @@ DATABASES = {
         'PORT': '5432',               # Default PostgreSQL port
     }
 }
+
+DATABASE_ROUTERS = (
+    'django_tenants.routers.TenantSyncRouter',
+)
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -224,6 +252,8 @@ SIMPLE_JWT = {
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',
     'TOKEN_TYPE_CLAIM': 'token_type',
+    # Custom claims for tenant information
+    'TOKEN_OBTAIN_SERIALIZER': 'tenants.serializers.TenantTokenObtainPairSerializer',
 }
 
 # settings for cloudinary storage
@@ -383,3 +413,18 @@ class DecimalEncoder(json.JSONEncoder):
 # Monkey-patch drf_yasg's json encoder:
 
 drf_yasg.codecs.json = lambda obj, **kwargs: json.dumps(obj, cls=DecimalEncoder, **kwargs)
+
+# Public schema settings
+PUBLIC_SCHEMA_URLCONF = 'store_management_backend.urls_public'
+
+# Tenant-specific settings
+TENANT_URLCONF = 'store_management_backend.urls_tenant'
+
+# Show public schema in admin
+SHOW_PUBLIC_IF_NO_TENANT_FOUND = True
+
+# Multi-tenant cache configuration
+TENANT_CACHE_PREFIX = 'tenant'
+
+# Multi-tenant logging
+TENANT_LOGGING_ENABLED = True

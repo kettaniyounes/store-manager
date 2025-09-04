@@ -7,15 +7,123 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+class IsTenantUser(permissions.BasePermission):
+    """
+    Permission to check if user belongs to the current tenant
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        # Get current tenant from request
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return False
+        
+        # Check if user belongs to this tenant
+        from tenants.models import TenantUser
+        return TenantUser.objects.filter(
+            user=request.user,
+            tenant=tenant,
+            is_active=True
+        ).exists()
+
+
+class IsTenantAdmin(permissions.BasePermission):
+    """
+    Permission for tenant administrators
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return False
+        
+        from tenants.models import TenantUser
+        tenant_user = TenantUser.objects.filter(
+            user=request.user,
+            tenant=tenant,
+            is_active=True
+        ).first()
+        
+        return tenant_user and tenant_user.role in ['admin', 'owner']
+
+
+class IsTenantOwner(permissions.BasePermission):
+    """
+    Permission for tenant owners only
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return False
+        
+        from tenants.models import TenantUser
+        tenant_user = TenantUser.objects.filter(
+            user=request.user,
+            tenant=tenant,
+            is_active=True,
+            role='owner'
+        ).first()
+        
+        return bool(tenant_user)
+
+
+class CanManageTenantUsers(permissions.BasePermission):
+    """
+    Permission to manage users within a tenant
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return False
+        
+        from tenants.models import TenantUser
+        tenant_user = TenantUser.objects.filter(
+            user=request.user,
+            tenant=tenant,
+            is_active=True
+        ).first()
+        
+        return tenant_user and tenant_user.can_manage_users
+
+
 class IsAdminOrReadOnlyUser(permissions.BasePermission):
     """
     Allows admin users to perform any action on users, read-only for others.
+    Updated to work with tenant context.
     """
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.is_staff and request.user.is_superuser
+        if not request.user.is_authenticated:
+            return False
+        
+        # Global superusers have access
+        if request.user.is_superuser:
+            return True
+        
+        # Check tenant admin permissions
+        tenant = getattr(request, 'tenant', None)
+        if tenant:
+            from tenants.models import TenantUser
+            tenant_user = TenantUser.objects.filter(
+                user=request.user,
+                tenant=tenant,
+                is_active=True
+            ).first()
+            return tenant_user and tenant_user.role in ['admin', 'owner']
+        
+        return False
 
     def has_object_permission(self, request, view, obj):
-        return request.user.is_authenticated and request.user.is_staff and request.user.is_superuser
+        return self.has_permission(request, view)
 
 
 class IsOwnerOrReadOnly(permissions.BasePermission):
@@ -36,6 +144,7 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
 class IsStoreManagerOrReadOnly(permissions.BasePermission):
     """
     Permission for store managers to manage their store's data
+    Updated to work with tenant context.
     """
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
@@ -45,13 +154,31 @@ class IsStoreManagerOrReadOnly(permissions.BasePermission):
         if request.user.is_superuser:
             return True
         
-        # Check if user is a store manager
+        # Check tenant permissions
+        tenant = getattr(request, 'tenant', None)
+        if tenant:
+            from tenants.models import TenantUser
+            tenant_user = TenantUser.objects.filter(
+                user=request.user,
+                tenant=tenant,
+                is_active=True
+            ).first()
+            return tenant_user and tenant_user.role in ['manager', 'admin', 'owner']
+        
+        # Fallback to original logic for backward compatibility
         return hasattr(request.user, 'profile') and request.user.profile.role in ['manager', 'admin']
     
     def has_object_permission(self, request, view, obj):
         # Superusers have full access
         if request.user.is_superuser:
             return True
+        
+        # Check tenant context
+        tenant = getattr(request, 'tenant', None)
+        if tenant and hasattr(obj, 'store'):
+            # Ensure the store belongs to the current tenant
+            if hasattr(obj.store, 'tenant') and obj.store.tenant != tenant:
+                return False
         
         # Check if user manages this store
         if hasattr(obj, 'store'):
@@ -170,7 +297,7 @@ class SecureAPIPermission(permissions.BasePermission):
             )
             # Don't block, but log for monitoring
         
-        return True
+        return True  # This permission only logs, doesn't restrict
 
 
 class AuditPermission(permissions.BasePermission):

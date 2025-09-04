@@ -81,6 +81,7 @@ urlpatterns = [
     path('api/v1/inventory/', include('inventory.urls')), # Include inventory app URLs
     path('api/v1/analytics/', include('analytics.urls')), # Include analytics app URLs
     path('api/v1/integrations/', include('integrations.urls')), # Include integrations app URLs
+    path('api/v1/tenants/', include('tenants.urls')), # Include tenants app URLs
 
     path('swagger<format>/', schema_view.without_ui(cache_timeout=0), name='schema-json'),
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),

@@ -16,3 +16,5 @@ conftest.py
 delete_migrations.py
 delete_pycache.py
 note.txt
+MULTI_TENANT_ARCHITECTURE_PLAN.md
+scripts/

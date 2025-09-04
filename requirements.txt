@@ -40,3 +40,4 @@ structlog
 django-extensions
 gevent
 psycopg2-binary
+django-tenants
